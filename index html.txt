@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <base target="_top">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.2.0/css/all.min.css">
+    <title><?= settings.CompanyName ?></title>
+    <?!= include('CSS'); ?>
+</head>
+<body>
+
+    <!-- MAIN LOGIN SCREEN -->
+    <div id="login-screen" class="screen active">
+        <div class="nep-login-page-wrapper">
+            <div class="nep-logo-container"><img src="<?= settings.CompanyLogoURL ?>" alt="NepHR Logo"></div>
+            <div class="nep-banner-container"><img src="<?= settings.CustomBannerURL ?>" alt="Company Banner"></div>
+            <div class="nep-login-card">
+                <h1>Login to NepHR</h1>
+                <form id="login-form" novalidate>
+                    <div class="input-group"><label for="username">USERNAME</label><input type="text" id="username" name="username" required></div>
+                    <div class="input-group"><label for="password">PASSWORD</label><div class="password-wrapper"><input type="password" id="password" name="password" required><i class="fas fa-eye" id="togglePassword"></i></div></div>
+                    <button type="submit" class="login-btn">Log In</button>
+                </form>
+                <p id="login-error" class="message error-message"></p>
+                <a href="#" class="forgot-password-link">Forgot password?</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- OTP-BASED PASSWORD RESET OVERLAY -->
+    <div id="otp-overlay" class="screen">
+        <div class="nep-login-page-wrapper">
+            <div class="nep-login-card">
+                <h1>Reset Password</h1>
+                <form id="otp-form" novalidate>
+                    <div class="input-group"><label for="reset-identifier">USERNAME, EMAIL, OR PHONE</label><div class="send-otp-wrapper"><input type="text" id="reset-identifier" name="reset-identifier" required><button type="button" id="send-otp-btn">Send OTP</button></div></div>
+                    <div id="reset-fields-container">
+                        <div class="input-group"><label for="otp-input">ONE-TIME PASSWORD</label><input type="text" id="otp-input" name="otp-input" maxlength="6" pattern="\d{6}" placeholder="_ _ _ _ _ _" required></div>
+                        <div class="input-group"><label for="new-password">NEW PASSWORD</label><input type="password" id="new-password" name="new-password" required></div>
+                        <div class="input-group">
+                            <label for="confirm-password">CONFIRM NEW PASSWORD</label>
+                            <div class="password-wrapper">
+                                <input type="password" id="confirm-password" name="confirm-password" required>
+                                <i class="fas fa-eye" id="toggleResetPassword"></i>
+                            </div>
+                        </div>
+                        <button type="submit" class="login-btn">Reset Password</button>
+                    </div>
+                </form>
+                <p id="reset-message" class="message error-message"></p>
+                <a href="#" class="back-to-login-link">Back to Login</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN APP SCREEN CONTAINER -->
+    <div id="main-app" class="screen">
+        <!-- Dashboard content will be dynamically loaded here -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <button class="menu-toggle-btn"><i class="fas fa-bars"></i></button>
+                <img src="<?= settings.CompanyLogoURL ?>" alt="Logo" class="sidebar-logo">
+                <h2 class="sidebar-title"><?= settings.CompanyName ?></h2>
+            </div>
+            <ul class="sidebar-menu">
+                <li><a href="#" data-page="dashboard" class="active"><i class="fas fa-th-large"></i> <span>Dashboard</span></a></li>
+                <li><a href="#" data-page="attendance"><i class="fas fa-calendar-check"></i> <span>Attendance</span></a></li>
+                <li><a href="#" data-page="leave"><i class="fas fa-plane-departure"></i> <span>Leave</span></a></li>
+                <li><a href="#" data-page="tasks"><i class="fas fa-tasks"></i> <span>Tasks</span></a></li>
+                <li><a href="#" data-page="performance"><i class="fas fa-chart-line"></i> <span>Performance</span></a></li>
+                <li><a href="#" data-page="reports"><i class="fas fa-file-alt"></i> <span>Reports</span></a></li>
+                <li><a href="#" data-page="notifications"><i class="fas fa-bell"></i> <span>Notifications</span></a></li>
+                <!-- Newly added menu items -->
+                <li class="admin-only" style="display:none;"><a href="#" data-page="employees"><i class="fas fa-users"></i> <span>Employees</span></a></li>
+                <li><a href="#" data-page="policies"><i class="fas fa-book"></i> <span>Policies</span></a></li>
+                <li><a href="#" data-page="calendar"><i class="fas fa-calendar-alt"></i> <span>Calendar</span></a></li>
+                <li class="admin-only" style="display:none;"><a href="#" data-page="departments"><i class="fas fa-building"></i> <span>Departments</span></a></li>
+                <li class="admin-only" style="display:none;"><a href="#" data-page="user-roles"><i class="fas fa-user-tag"></i> <span>User Roles</span></a></li>
+                <li class="admin-only" style="display:none;"><a href="#" data-page="assign-assets"><i class="fas fa-desktop"></i> <span>Assign Assets</span></a></li>
+                <!-- Existing admin-only payroll and settings links -->
+                <li class="admin-only" style="display:none;"><a href="#" data-page="payroll"><i class="fas fa-money-bill-wave"></i> <span>Payroll</span></a></li>
+                <li class="admin-only" style="display:none;"><a href="#" data-page="settings"><i class="fas fa-cog"></i> <span>Settings</span></a></li>
+                <li><a href="#" data-page="help"><i class="fas fa-question-circle"></i> <span>Help Center</span></a></li>
+            </ul>
+            <div class="sidebar-footer">
+                <span id="live-datetime"></span>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="app-header">
+                <div class="header-left">
+                    <button class="menu-toggle-btn desktop-hide"><i class="fas fa-bars"></i></button>
+                    <!-- The pageTitle will be dynamically updated based on the current page content -->
+                    <h1 id="page-title">Dashboard</h1>
+                </div>
+                <div class="header-right">
+                    <i class="fas fa-search theme-switcher" title="Search"></i>
+                    <i class="fas fa-bell theme-switcher" title="Notifications"></i>
+                    <i class="fas fa-moon theme-switcher" id="theme-toggle" title="Toggle Theme"></i>
+                    <div class="user-menu" id="user-dropdown-toggle">
+                        <img src="" alt="User Photo" id="header-user-photo" class="user-photo-placeholder">
+                        <span id="header-user-name"></span>
+                        <i class="fas fa-chevron-down dropdown-arrow"></i>
+                        <div class="dropdown-content">
+                            <a href="#" data-action="view-profile"><i class="fas fa-user-circle"></i> View Profile</a>
+                            <a href="#" data-action="change-password"><i class="fas fa-key"></i> Change Password</a>
+                            <a href="#" data-action="logout"><i class="fas fa-sign-out-alt"></i> Logout</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="page-container">
+                <!-- Dynamic content will be loaded into this div -->
+                <div id="dynamic-page-content">
+                    <!-- This content will be dynamically generated by JavaScript -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MESSAGE MODAL -->
+    <div id="message-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-button">&times;</span>
+            <p id="modal-message-text"></p>
+            <div class="modal-buttons">
+                <button class="modal-confirm-btn">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- PROFILE MODAL -->
+    <div id="profile-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-button" data-modal="profile-modal">&times;</span>
+            <h2>Your Profile</h2>
+            <form id="profile-form">
+                <div class="form-group">
+                    <label for="profile-photo-upload">Profile Photo</label>
+                    <input type="file" id="profile-photo-upload" accept="image/*">
+                    <img id="profile-photo-preview" src="" alt="Profile Photo" class="user-photo-lg">
+                </div>
+                <div class="form-group"><label for="profile-username">Username:</label><input type="text" id="profile-username" readonly></div>
+                <div class="form-group"><label for="profile-fullname">Full Name:</label><input type="text" id="profile-fullname" readonly></div>
+                <div class="form-group"><label for="profile-email">Email:</label><input type="email" id="profile-email"></div>
+                <div class="form-group"><label for="profile-phone">Phone:</label><input type="tel" id="profile-phone"></div>
+                <div class="form-group"><label for="profile-address">Address:</label><input type="text" id="profile-address"></div>
+                <div class="form-group"><label for="profile-department">Department:</label><input type="text" id="profile-department" readonly></div>
+                <div class="form-group"><label for="profile-role">Role:</label><input type="text" id="profile-role" readonly></div>
+                <div class="form-group"><label for="profile-joining-date">Joining Date:</label><input type="text" id="profile-joining-date" readonly></div>
+                <div class="form-group"><label for="profile-emergency-contact-name">Emergency Contact Name:</label><input type="text" id="profile-emergency-contact-name"></div>
+                <div class="form-group"><label for="profile-emergency-contact-phone">Emergency Contact Phone:</label><input type="tel" id="profile-emergency-contact-phone"></div>
+                <div class="form-group"><label for="profile-emergency-contact-relation">Emergency Contact Relation:</label><input type="text" id="profile-emergency-contact-relation"></div>
+                <button type="submit" class="login-btn">Update Profile</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- CHANGE PASSWORD MODAL -->
+    <div id="change-password-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-button" data-modal="change-password-modal">&times;</span>
+            <h2>Change Password</h2>
+            <form id="change-password-form">
+                <div class="form-group"><label for="current-password">Current Password:</label><input type="password" id="current-password" required></div>
+                <div class="form-group"><label for="new-password-change">New Password:</label><input type="password" id="new-password-change" required></div>
+                <div class="form-group"><label for="confirm-new-password-change">Confirm New Password:</label><input type="password" id="confirm-new-password-change" required></div>
+                <button type="submit" class="login-btn">Change Password</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <?!= include('JavaScript'); ?>
+</body>
+</html>
