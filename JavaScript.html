@@ -1,0 +1,1448 @@
+<script>
+    // --- IMMEDIATE LOG TO CHECK IF SCRIPT IS LOADED ---
+    console.log('[CLIENT-INIT] JavaScript.html script block started loading.');
+
+    document.addEventListener('DOMContentLoaded', () => {
+        console.log('[CLIENT-INIT] DOMContentLoaded event fired. Starting application initialization.');
+
+        try {
+            // --- GLOBAL ELEMENTS ---
+            const loginScreen = document.getElementById('login-screen');
+            const otpOverlay = document.getElementById('otp-overlay');
+            const mainAppScreen = document.getElementById('main-app');
+            const pageTitle = document.getElementById('page-title');
+            const headerUserName = document.getElementById('header-user-name');
+            const headerUserPhoto = document.getElementById('header-user-photo');
+            const sidebar = document.querySelector('.sidebar');
+            const userDropdownToggle = document.getElementById('user-dropdown-toggle');
+            const userDropdownContent = userDropdownToggle ? userDropdownToggle.querySelector('.dropdown-content') : null;
+            const dynamicPageContent = document.getElementById('dynamic-page-content'); // Element for dynamic content
+            
+            // Critical check: Ensure core elements are found
+            if (!loginScreen || !mainAppScreen || !dynamicPageContent) {
+                console.error('[CLIENT-CRITICAL-ERROR] Missing core HTML elements during DOMContentLoaded! Check Index.html IDs.');
+                // Attempt to show a fallback error on the page if dynamicPageContent is not found
+                if (document.body) {
+                    document.body.innerHTML = `<div class="p-8 bg-red-100 text-red-800 rounded-lg shadow-md mx-auto my-10 max-w-lg">
+                        <h2 class="text-2xl font-bold mb-4">Application Initialization Error</h2>
+                        <p>Some critical elements of the application could not be found. This often indicates a problem with the HTML structure.</p>
+                        <p class="mt-2">Please ensure that the <code>login-screen</code>, <code>main-app</code>, and <code>dynamic-page-content</code> elements exist in your <code>Index.html</code> with the correct IDs.</p>
+                        <p class="mt-4 text-sm">Check your browser's console for more details.</p>
+                    </div>`;
+                }
+                return; // Stop execution if critical elements are missing
+            }
+
+
+            // --- MODAL ELEMENTS ---
+            const messageModal = document.getElementById('message-modal');
+            const modalMessageText = document.getElementById('modal-message-text');
+            const modalConfirmBtn = messageModal ? messageModal.querySelector('.modal-confirm-btn') : null;
+            const modalCloseBtn = messageModal ? messageModal.querySelector('.close-button') : null;
+
+            const profileModal = document.getElementById('profile-modal');
+            const changePasswordModal = document.getElementById('change-password-modal');
+
+            let currentUser = null; // Store current logged-in user data
+            let sessionToken = null; // Store current session token
+
+            // --- HELPER for server calls ---
+            const callServer = (func, ...args) => new Promise((res, rej) => {
+                document.body.style.cursor = 'wait';
+                console.log(`[CLIENT] Calling server function: ${func} with args:`, args); // Log server calls
+                // Ensure google.script.run exists before attempting to call it
+                if (typeof google === 'undefined' || typeof google.script === 'undefined' || typeof google.script.run === 'undefined') {
+                    const errorMsg = 'google.script.run is not available. Ensure Apps Script environment is correctly loaded.';
+                    console.error(`[CLIENT-CRITICAL-ERROR] ${errorMsg}`);
+                    showMessageModal(`Application Error: ${errorMsg}`, 'error');
+                    document.body.style.cursor = 'default';
+                    rej(new Error(errorMsg));
+                    return;
+                }
+
+                google.script.run
+                    .withSuccessHandler(response => {
+                        document.body.style.cursor = 'default';
+                        console.log(`[CLIENT] Server function ${func} success:`, response); // Log successful responses
+                        res(response);
+                    })
+                    .withFailureHandler(error => {
+                        document.body.style.cursor = 'default';
+                        console.error(`[CLIENT] Server function ${func} failed:`, error); // Log failed responses
+                        showMessageModal(`Server Error: ${error.message}`, 'error');
+                        rej(error);
+                    })
+                    [func](...args);
+            });
+
+            /**
+             * Shows a custom message modal.
+             * @param {string} message The message to display.
+             * @param {'success'|'error'|'info'} type The type of message to style it.
+             */
+            function showMessageModal(message, type = 'info') {
+                if (!messageModal || !modalMessageText) {
+                    console.error('[CLIENT-CRITICAL-ERROR] Message modal elements not found. Cannot display message:', message);
+                    return; // Prevent errors if modal elements are missing
+                }
+                modalMessageText.textContent = message;
+                modalMessageText.className = `message ${type}-message`; // Apply class for styling
+                messageModal.classList.add('active');
+                console.log(`[CLIENT] Message Modal: ${message} (Type: ${type})`); // Log modal messages
+            }
+
+            // Modal close handlers
+            if (modalConfirmBtn) modalConfirmBtn.onclick = () => messageModal.classList.remove('active');
+            if (modalCloseBtn) modalCloseBtn.onclick = () => messageModal.classList.remove('active');
+            
+            // Universal click handler for closing modals and dropdowns
+            window.onclick = (event) => {
+                if (messageModal && event.target === messageModal) {
+                    messageModal.classList.remove('active');
+                }
+                if (profileModal && event.target === profileModal) {
+                    profileModal.classList.remove('active');
+                }
+                if (changePasswordModal && event.target === changePasswordModal) {
+                    changePasswordModal.classList.remove('active');
+                }
+
+                // Close user dropdown if click is outside of it
+                if (userDropdownToggle && userDropdownContent && !userDropdownToggle.contains(event.target) && userDropdownToggle.classList.contains('active')) {
+                    userDropdownToggle.classList.remove('active');
+                    userDropdownContent.style.opacity = '0';
+                    userDropdownContent.style.transform = 'translateY(-5px)';
+                    setTimeout(() => {
+                        userDropdownContent.style.display = 'none';
+                    }, 200); // Match CSS transition duration
+                }
+            };
+
+            // Close buttons for specific modals
+            document.querySelectorAll('.modal .close-button').forEach(button => {
+                button.onclick = (event) => {
+                    const modalId = event.target.dataset.modal;
+                    if (modalId) {
+                        const targetModal = document.getElementById(modalId);
+                        if (targetModal) targetModal.classList.remove('active');
+                    }
+                };
+            });
+
+
+            // --- AUTHENTICATION & PASSWORD RESET ---
+
+            const togglePassword = document.getElementById('togglePassword');
+            const passwordInput = document.getElementById('password');
+            if (togglePassword && passwordInput) {
+                passwordInput.addEventListener('input', () => togglePassword.classList.toggle('visible', passwordInput.value.length > 0));
+                togglePassword.addEventListener('click', () => {
+                    const isPassword = passwordInput.getAttribute('type') === 'password';
+                    passwordInput.setAttribute('type', isPassword ? 'text' : 'password');
+                    togglePassword.classList.toggle('fa-eye', !isPassword); togglePassword.classList.toggle('fa-eye-slash', isPassword);
+                });
+            }
+
+            const loginForm = document.getElementById('login-form');
+            if (loginForm) {
+                loginForm.addEventListener('submit', async e => {
+                    e.preventDefault();
+                    const loginError = document.getElementById('login-error');
+                    if (loginError) loginError.textContent = ''; // Ensure loginError element exists
+
+                    const usernameInput = document.getElementById('username');
+                    const passwordInputField = document.getElementById('password');
+
+                    // --- CRITICAL LOGS FOR DEBUGGING LOGIN ---
+                    console.log(`[CLIENT-LOGIN] Checking username input element:`, usernameInput);
+                    console.log(`[CLIENT-LOGIN] Checking password input element:`, passwordInputField);
+                    console.log(`[CLIENT-LOGIN] Raw username input value (from element): "${usernameInput ? usernameInput.value : 'N/A (input element not found)'}"`);
+                    console.log(`[CLIENT-LOGIN] Raw password input value (from element): "${passwordInputField ? passwordInputField.value : 'N/A (input element not found)'}"`);
+                    // --- END CRITICAL LOGS ---
+
+                    if (!usernameInput || !passwordInputField) {
+                        const msg = "Login form inputs not found. Check HTML IDs for 'username' and 'password'.";
+                        console.error(`[CLIENT-CRITICAL-ERROR] ${msg}`);
+                        if (loginError) loginError.textContent = msg;
+                        showMessageModal(msg, 'error');
+                        return;
+                    }
+
+                    const username = usernameInput.value;
+                    const password = passwordInputField.value;
+
+                    // Double-check if the values are actually present after extraction
+                    console.log(`[CLIENT-LOGIN] Extracted username variable: "${username}"`);
+                    console.log(`[CLIENT-LOGIN] Extracted password variable: "${password ? password.substring(0, 5) + '...' : 'N/A'}"`);
+
+
+                    if (!username || !password) {
+                        const msg = "Please enter both username and password.";
+                        if (loginError) loginError.textContent = msg;
+                        showMessageModal(msg, 'error');
+                        console.warn(`[CLIENT-LOGIN] Login failed: ${msg}`);
+                        return;
+                    }
+
+                    console.log(`[CLIENT] Attempting login with captured username: "${username}" and password: "${password.substring(0,5)}..."`); // Log login attempt, mask password
+                    try {
+                        const response = await callServer('loginUser', username, password);
+                        if (response.success) {
+                            currentUser = response.user;
+                            sessionToken = response.token;
+                            console.log('[CLIENT] Login successful. Assigned currentUser:', currentUser); // Log successful login and assigned user
+                            console.log('[CLIENT] Assigned sessionToken:', sessionToken ? sessionToken.substring(0, 10) + '...' : 'N/A'); // Log token fragment
+
+                            loadDashboard(currentUser); // Load dashboard only on successful login
+                            loginScreen.classList.remove('active'); // Hide login screen
+                        } else {
+                            if (loginError) loginError.textContent = response.message;
+                            console.warn('[CLIENT] Login failed:', response.message); // Log login failure
+                        }
+                    } catch (err) { /* Handled by callServer's failure handler, which calls showMessageModal */ }
+                });
+            } else {
+                console.error("[CLIENT-CRITICAL-ERROR] Login form element not found. Check HTML ID for 'login-form'.");
+            }
+
+
+            const forgotPasswordLink = document.querySelector('.forgot-password-link');
+            if (forgotPasswordLink) forgotPasswordLink.addEventListener('click', e => { e.preventDefault(); loginScreen.classList.add('blurred'); otpOverlay.classList.add('active'); });
+
+            // --- OTP OVERLAY LOGIC ---
+            const backToLoginLink = document.querySelector('.back-to-login-link');
+            const sendOtpBtn = document.getElementById('send-otp-btn');
+            const resetFieldsContainer = document.getElementById('reset-fields-container');
+            const resetMessage = document.getElementById('reset-message');
+            const otpForm = document.getElementById('otp-form');
+
+            const toggleResetPassword = document.getElementById('toggleResetPassword');
+            const newPasswordInput = document.getElementById('new-password');
+            const confirmPasswordInput = document.getElementById('confirm-password');
+
+            if (toggleResetPassword && newPasswordInput && confirmPasswordInput) {
+                confirmPasswordInput.addEventListener('input', () => {
+                    toggleResetPassword.classList.toggle('visible', confirmPasswordInput.value.length > 0);
+                });
+                toggleResetPassword.addEventListener('click', function () {
+                    const isPassword = newPasswordInput.getAttribute('type') === 'password';
+                    newPasswordInput.setAttribute('type', isPassword ? 'text' : 'password');
+                    confirmPasswordInput.setAttribute('type', isPassword ? 'text' : 'password');
+                    this.classList.toggle('fa-eye', !isPassword); this.classList.toggle('fa-eye-slash', isPassword);
+                });
+            }
+
+            if (backToLoginLink) backToLoginLink.addEventListener('click', e => {
+                e.preventDefault();
+                if (loginScreen) loginScreen.classList.remove('blurred');
+                if (otpOverlay) otpOverlay.classList.remove('active');
+                if (resetFieldsContainer) resetFieldsContainer.classList.remove('open');
+                if (resetMessage) resetMessage.textContent = '';
+                // Clear reset form fields
+                const resetIdentifier = document.getElementById('reset-identifier');
+                const otpInput = document.getElementById('otp-input');
+                if (resetIdentifier) resetIdentifier.value = '';
+                if (otpInput) otpInput.value = '';
+                if (newPasswordInput) newPasswordInput.value = '';
+                if (confirmPasswordInput) confirmPasswordInput.value = '';
+            });
+
+            if (sendOtpBtn) sendOtpBtn.addEventListener('click', async () => {
+                const identifierInput = document.getElementById('reset-identifier');
+                const identifier = identifierInput ? identifierInput.value : '';
+                if (!identifier) { showMessageModal('Please provide an identifier.', 'error'); return; }
+
+                if (resetMessage) resetMessage.textContent = 'Sending OTP...';
+                if (sendOtpBtn) sendOtpBtn.disabled = true;
+                try {
+                    const response = await callServer('sendOtp', identifier);
+                    if (resetMessage) {
+                        resetMessage.className = `message ${response.success ? 'success-message' : 'error-message'}`;
+                        resetMessage.textContent = response.message;
+                    }
+                    if (response.success && resetFieldsContainer) resetFieldsContainer.classList.add('open');
+                } catch (err) {
+                    if (resetMessage) {
+                        resetMessage.className = 'message error-message';
+                        resetMessage.textContent = `Error sending OTP.`;
+                    }
+                } finally { if (sendOtpBtn) sendOtpBtn.disabled = false; }
+            });
+
+            if (otpForm) otpForm.addEventListener('submit', async e => {
+                e.preventDefault();
+                const identifierInput = document.getElementById('reset-identifier');
+                const otpInput = document.getElementById('otp-input');
+                const identifier = identifierInput ? identifierInput.value : '';
+                const otp = otpInput ? otpInput.value : '';
+                const newPassword = newPasswordInput ? newPasswordInput.value : '';
+                const confirmPassword = confirmPasswordInput ? confirmPasswordInput.value : '';
+
+                if (newPassword !== confirmPassword) { showMessageModal("Passwords do not match.", 'error'); return; }
+
+                if (resetMessage) resetMessage.textContent = 'Resetting password...';
+                try {
+                    const response = await callServer('resetPasswordWithOtp', identifier, otp, newPassword);
+                    if (resetMessage) {
+                        resetMessage.className = `message ${response.success ? 'success-message' : 'error-message'}`;
+                        resetMessage.textContent = response.message;
+                    }
+                    if(response.success) {
+                        setTimeout(() => {
+                            if (backToLoginLink) backToLoginLink.click();
+                            showMessageModal("Password reset successfully! Please log in with your new password.", 'success');
+                        }, 1500);
+                    }
+                } catch (err) { /* Handled by callServer */ }
+            });
+
+            // --- DASHBOARD AND APP LOGIC ---
+
+            /**
+             * Loads the dashboard based on the authenticated user's role.
+             * @param {Object} user Authenticated user object.
+             */
+            async function loadDashboard(user) {
+                if (!user) {
+                    console.error('[CLIENT] loadDashboard called with null/undefined user. Cannot proceed.');
+                    showMessageModal('User data missing for dashboard. Please try logging in again.', 'error');
+                    return;
+                }
+                mainAppScreen.classList.add('active');
+                if (headerUserName) headerUserName.textContent = user.fullName;
+                if (headerUserPhoto) {
+                    headerUserPhoto.src = user.photoUrl || 'https://placehold.co/40x40/EAF0F6/8492A6?text=U';
+                    headerUserPhoto.alt = user.fullName;
+                }
+
+                // Clear dynamic content area before loading new dashboard
+                if (dynamicPageContent) dynamicPageContent.innerHTML = '';
+                console.log('[CLIENT] Loading dashboard for user:', user.fullName, 'Role:', user.role, 'Employee ID:', user.employeeId); // Log dashboard load attempt with details
+
+                try {
+                    // Check if user.role and user.employeeId are valid before passing to server
+                    if (!user.role || !user.employeeId) {
+                        const clientErrorMsg = `Invalid user data for dashboard: role=${user.role}, employeeId=${user.employeeId}. Please ensure login returns complete user object.`;
+                        console.error('[CLIENT-CRITICAL-ERROR]', clientErrorMsg);
+                        showMessageModal(clientErrorMsg, 'error');
+                        if (dynamicPageContent) dynamicPageContent.innerHTML = `<div class="card p-5 rounded-lg shadow-md"><h2 class="text-xl font-semibold mb-4">Dashboard Data Error</h2><p>${clientErrorMsg}</p></div>`;
+                        return;
+                    }
+
+                    const dashboardData = await callServer('getDashboardData', user.role, user.employeeId);
+                    console.log('[CLIENT] Type of dashboardData received:', typeof dashboardData, dashboardData); // New log for data type
+
+                    if (dashboardData) {
+                        console.log('[CLIENT] Dashboard data received (not null/undefined):', dashboardData); // Log received dashboard data
+
+                        if (user.role === 'Admin' || user.role === 'HR' || user.role === 'Manager') {
+                            renderAdminDashboard(dashboardData, user.fullName, user.email); // Pass email for welcome message
+                            document.querySelectorAll('.admin-only').forEach(item => item.style.display = 'block');
+                            console.log("[CLIENT] Admin/HR/Manager menu items are set to 'block'."); // New log for visibility
+                        } else {
+                            renderEmployeeDashboard(dashboardData, user.fullName);
+                            document.querySelectorAll('.admin-only').forEach(item => item.style.display = 'none');
+                            console.log("[CLIENT] Employee menu items are set to 'none'."); // New log for visibility
+                        }
+                        updateDateTime();
+                        setInterval(updateDateTime, 1000);
+                    } else {
+                        const errorMessage = "Failed to load dashboard data: No data returned from server. Please check backend script.";
+                        showMessageModal(errorMessage, 'error');
+                        console.error("[CLIENT] Dashboard load error:", errorMessage);
+                        if (dynamicPageContent) dynamicPageContent.innerHTML = `<div class="card p-5 rounded-lg shadow-md"><h2 class="text-xl font-semibold mb-4">Dashboard Loading Error</h2><p>${errorMessage}</p></div>`;
+                    }
+                } catch (err) {
+                    const errorMessage = `Failed to load dashboard data: ${err.message}. Please check backend script and try again.`;
+                    showMessageModal(errorMessage, 'error');
+                    console.error("[CLIENT] Dashboard load error (caught exception):", err);
+                    if (dynamicPageContent) dynamicPageContent.innerHTML = `<div class="card p-5 rounded-lg shadow-md"><h2 class="text-xl font-semibold mb-4">Dashboard Loading Error</h2><p>${err.message}</p><p>Please try logging in again or contact support if the issue persists.</p></div>`;
+                }
+            }
+
+            /**
+             * Generates a time-based greeting.
+             * @param {string} userName The full name of the user.
+             * @returns {string} A greeting like "Good Morning, [Name]" or "Good Afternoon, [Name]".
+             */
+            function generateTimeBasedGreeting(userName) {
+                const hour = new Date().getHours();
+                let greeting = "Hello";
+                if (hour < 12) {
+                    greeting = "Good Morning";
+                } else if (hour < 18) {
+                    greeting = "Good Afternoon";
+                } else {
+                    greeting = "Good Evening";
+                }
+                return `${greeting}, ${userName}`;
+            }
+
+            /**
+             * Renders a single dashboard card.
+             * @param {string} iconClass Font Awesome icon class.
+             * @param {string} title Card title.
+             * @param {string|number} value Card value.
+             * @param {string} footer Card footer text.
+             * @param {string} [colorClass=''] Optional class for color coding (e.g., 'card-green', 'card-red').
+             * @returns {string} HTML string for the card.
+             */
+            function createDashboardCard(iconClass, title, value, footer, colorClass = '') {
+                return `
+                    <div class="card ${colorClass}">
+                        <div class="card-header">
+                            <h4 class="card-title">${title}</h4>
+                            <div class="card-icon"><i class="${iconClass}"></i></div>
+                        </div>
+                        <div class="card-value">${value}</div>
+                        <div class="card-footer">${footer}</div>
+                    </div>
+                `;
+            }
+
+            /**
+             * Renders the Admin Dashboard content with new layout.
+             * @param {Object} data Dashboard data from server.
+             * @param {string} userName Full name of the current user.
+             * @param {string} userEmail Email of the current user.
+             */
+            function renderAdminDashboard(data, userName, userEmail) {
+                console.log('[CLIENT] Attempting to render Admin Dashboard. Data received:', data); // Log rendering attempt
+
+                // Defensive checks for data properties
+                const pendingLeaveRequests = data.pendingLeaveRequests !== undefined ? data.pendingLeaveRequests : 'N/A';
+                const totalEmployees = data.totalEmployees !== undefined ? data.totalEmployees : 'N/A';
+                const presentToday = data.todayAttendance?.present !== undefined ? data.todayAttendance.present : 'N/A';
+                const absentToday = data.todayAttendance?.absent !== undefined ? data.todayAttendance.absent : 'N/A';
+                const lateCheckIns = data.todayAttendance?.lateCheckIns !== undefined ? data.todayAttendance.lateCheckIns : 'N/A';
+                const tasksCompletedToday = data.tasksCompletedToday !== undefined ? data.tasksCompletedToday : 'N/A';
+                const openTasks = data.openTasks !== undefined ? data.openTasks : 'N/A';
+                const upcomingLeaves = data.upcomingLeaves !== undefined ? data.upcomingLeaves : 'N/A';
+                const performanceAlerts = data.performanceAlerts !== undefined ? data.performanceAlerts : 'N/A';
+                const estimatedMonthlySalary = data.estimatedMonthlySalary !== undefined ? data.estimatedMonthlySalary?.toLocaleString() : 'N/A';
+                const motivationalQuote = data.motivationalQuote || 'Strive for progress, not perfection.';
+                const companyMainTitle = data.companyName || 'NepHR HRMS'; // Get company name from settings
+
+                console.log(`[CLIENT] Admin Dashboard Data Values:
+                    Pending Leaves: ${pendingLeaveRequests}
+                    Total Employees: ${totalEmployees}
+                    Present Today: ${presentToday}
+                    Absent Today: ${absentToday}
+                    Late Check-ins: ${lateCheckIns}
+                    Tasks Completed Today: ${tasksCompletedToday}
+                    Open Tasks: ${openTasks}
+                    Upcoming Leaves: ${upcomingLeaves}
+                    Performance Alerts: ${performanceAlerts}
+                    Estimated Monthly Salary: ${estimatedMonthlySalary}
+                    Company Name: ${companyMainTitle}
+                    Motivational Quote: ${motivationalQuote}
+                `);
+
+
+                if (pageTitle) pageTitle.textContent = 'Dashboard'; // Keep header title generic for dashboard view
+                
+                try {
+                    if (dynamicPageContent) dynamicPageContent.innerHTML = `
+                        <div class="p-4 sm:p-6 lg:p-8 space-y-6 w-full mx-auto max-w-7xl">
+                            <div class="dashboard-header-section mb-4">
+                                <h1 class="text-3xl font-bold text-gray-800 dark:text-white">Admin Dashboard</h1>
+                            </div>
+
+                            <div class="welcome-section bg-gradient-to-r from-blue-500 to-indigo-600 text-white p-5 rounded-lg shadow-lg flex flex-col sm:flex-row justify-between items-center text-center sm:text-left">
+                                <span class="welcome-message text-xl font-semibold">${generateTimeBasedGreeting(userName)}</span>
+                                <span class="motivational-speech text-sm italic mt-2 sm:mt-0">"${motivationalQuote}"</span>
+                            </div>
+
+                            <div class="summary-cards grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6" id="admin-dashboard-summary-cards">
+                                <!-- Cards will be dynamically added here -->
+                            </div>
+
+                            <div class="dashboard-section bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                                <h2 class="text-2xl font-semibold text-gray-800 dark:text-white mb-4">View Employees & Add Employee</h2>
+                                <div class="flex flex-col sm:flex-row gap-4">
+                                    <button class="add-employee-btn bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105" id="add-employee-btn"><i class="fas fa-user-plus mr-2"></i> Add New Employee</button>
+                                    <button class="add-employee-btn bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-3 px-6 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105" id="view-employees-btn"><i class="fas fa-users mr-2"></i> View All Employees</button>
+                                </div>
+                            </div>
+
+                            <div class="dashboard-section bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                                <h2 class="text-2xl font-semibold text-gray-800 dark:text-white mb-4">Attendance History</h2>
+                                <div class="table-responsive overflow-x-auto">
+                                    <table class="data-table min-w-full bg-white dark:bg-gray-700 rounded-lg shadow-md">
+                                        <thead>
+                                            <tr>
+                                                <th class="py-3 px-4 bg-gray-100 dark:bg-gray-600 text-left text-xs font-semibold text-gray-600 dark:text-gray-200 uppercase tracking-wider rounded-tl-lg">Employee Name</th>
+                                                <th class="py-3 px-4 bg-gray-100 dark:bg-gray-600 text-left text-xs font-semibold text-gray-600 dark:text-gray-200 uppercase tracking-wider">Check-in Time</th>
+                                                <th class="py-3 px-4 bg-gray-100 dark:bg-gray-600 text-left text-xs font-semibold text-gray-600 dark:text-gray-200 uppercase tracking-wider">Check-out Time</th>
+                                                <th class="py-3 px-4 bg-gray-100 dark:bg-gray-600 text-left text-xs font-semibold text-gray-600 dark:text-gray-200 uppercase tracking-wider">Status</th>
+                                                <th class="py-3 px-4 bg-gray-100 dark:bg-gray-600 text-left text-xs font-semibold text-gray-600 dark:text-gray-200 uppercase tracking-wider rounded-tr-lg">Overtime</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <!-- Attendance data will be loaded here -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <div class="dashboard-section bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                                <h2 class="text-2xl font-semibold text-gray-800 dark:text-white mb-4">Leave Details</h2>
+                                <div class="table-responsive overflow-x-auto">
+                                    <table class="data-table min-w-full bg-white dark:bg-gray-700 rounded-lg shadow-md">
+                                        <thead>
+                                            <tr>
+                                                <th class="py-3 px-4 bg-gray-100 dark:bg-gray-600 text-left text-xs font-semibold text-gray-600 dark:text-gray-200 uppercase tracking-wider rounded-tl-lg">Employee Name</th>
+                                                <th class="py-3 px-4 bg-gray-100 dark:bg-gray-600 text-left text-xs font-semibold text-gray-600 dark:text-gray-200 uppercase tracking-wider">Leave Type</th>
+                                                <th class="py-3 px-4 bg-gray-100 dark:bg-gray-600 text-left text-xs font-semibold text-gray-600 dark:text-gray-200 uppercase tracking-wider">Start Date</th>
+                                                <th class="py-3 px-4 bg-gray-100 dark:bg-gray-600 text-left text-xs font-semibold text-gray-600 dark:text-gray-200 uppercase tracking-wider">End Date</th>
+                                                <th class="py-3 px-4 bg-gray-100 dark:bg-gray-600 text-left text-xs font-semibold text-gray-600 dark:text-gray-200 uppercase tracking-wider">Total Days</th>
+                                                <th class="py-3 px-4 bg-gray-100 dark:bg-gray-600 text-left text-xs font-semibold text-gray-600 dark:text-gray-200 uppercase tracking-wider rounded-tr-lg">Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <!-- Leave data will be loaded here -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            
+                            <div class="dashboard-grid grid grid-cols-1 lg:grid-cols-2 gap-6" id="admin-dashboard-main-content">
+                                <div class="chart-container bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                                    <h3 class="text-xl font-semibold text-gray-800 dark:text-white mb-4">Attendance Trends</h3>
+                                    <p class="text-gray-600 dark:text-gray-300">Graph for attendance trends will go here.</p>
+                                </div>
+                                <div class="live-feed bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                                    <h3 class="text-xl font-semibold text-gray-800 dark:text-white mb-4">Recent Activity</h3>
+                                    <p class="text-gray-600 dark:text-gray-300">Live feed of check-ins/outs, task updates will go here.</p>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                } catch (e) {
+                    console.error("[CLIENT] Error setting innerHTML for Admin Dashboard:", e);
+                    showMessageModal("An error occurred while rendering the Admin Dashboard layout.", 'error');
+                    return; // Stop execution if basic layout render fails
+                }
+                
+                const adminDashboardSummaryCards = document.getElementById('admin-dashboard-summary-cards');
+                const attendanceTableBody = document.querySelector('#attendance-table tbody');
+                const leaveTableBody = document.querySelector('#leave-table tbody');
+
+                const cards = [
+                    createDashboardCard('fas fa-file-alt', 'Pending Leave Requests', pendingLeaveRequests, 'Awaiting approval', 'card-orange'),
+                    createDashboardCard('fas fa-users', 'Total Employees', totalEmployees, 'Active staff members', 'card-blue'),
+                    createDashboardCard('fas fa-user-check', 'Present Today', presentToday, 'Checked-in', 'card-green'),
+                    createDashboardCard('fas fa-user-times', 'Absent Today', absentToday, 'Did not check in', 'card-red'),
+                    createDashboardCard('fas fa-clock', 'Late Check-ins', lateCheckIns, 'Checked in after start time', 'card-yellow'),
+                    createDashboardCard('fas fa-tasks', 'Tasks Completed Today', tasksCompletedToday, 'Completed tasks', 'card-green'),
+                    createDashboardCard('fas fa-exclamation-triangle', 'Pending Tasks', openTasks, 'Uncompleted tasks', 'card-red'),
+                    createDashboardCard('fas fa-calendar-alt', 'Upcoming Leaves', upcomingLeaves, 'Employees on leave soon', 'card-info'),
+                    createDashboardCard('fas fa-chart-pie', 'Performance Alerts', performanceAlerts, 'Employees needing attention', 'card-red'),
+                    createDashboardCard('fas fa-money-bill-wave', 'Estimated Salary This Month', estimatedMonthlySalary, 'Total gross salary', 'card-purple'),
+                ];
+
+                if (adminDashboardSummaryCards) {
+                    cards.forEach(cardHtml => {
+                        adminDashboardSummaryCards.insertAdjacentHTML('beforeend', cardHtml);
+                    });
+                } else {
+                    console.warn("[CLIENT] adminDashboardSummaryCards element not found for Admin Dashboard.");
+                }
+
+
+                // Populate Attendance History Table
+                console.log("[CLIENT] Populating Admin Attendance History table with data:", data.attendanceHistory);
+                if (attendanceTableBody) {
+                    attendanceTableBody.innerHTML = ''; // Clear existing rows
+                    if (data.attendanceHistory && Array.isArray(data.attendanceHistory) && data.attendanceHistory.length > 0) {
+                        data.attendanceHistory.forEach(record => {
+                            const row = `
+                                <tr>
+                                    <td>${record.employeeName || 'N/A'}</td>
+                                    <td>${record.checkInTime || 'N/A'}</td>
+                                    <td>${record.checkOutTime || 'N/A'}</td>
+                                    <td>${record.status || 'N/A'}</td>
+                                    <td>${record.overtime || '0h'}</td>
+                                </tr>
+                            `;
+                            attendanceTableBody.insertAdjacentHTML('beforeend', row);
+                        });
+                    } else {
+                        attendanceTableBody.innerHTML = '<tr><td colspan="5" style="text-align: center;">No attendance records found.</td></tr>';
+                    }
+                } else {
+                    console.warn("[CLIENT] attendanceTableBody element not found for Admin Dashboard.");
+                }
+
+                // Populate Leave Details Section
+                console.log("[CLIENT] Populating Admin Leave Details table with data:", data.leaveDetails);
+                if (leaveTableBody) {
+                    leaveTableBody.innerHTML = ''; // Clear existing rows
+                    if (data.leaveDetails && Array.isArray(data.leaveDetails) && data.leaveDetails.length > 0) {
+                        data.leaveDetails.forEach(leave => {
+                            const row = `
+                                <tr>
+                                    <td>${leave.employeeName || 'N/A'}</td>
+                                    <td>${leave.leaveType || 'N/A'}</td>
+                                    <td>${leave.startDate || 'N/A'}</td>
+                                    <td>${leave.endDate || 'N/A'}</td>
+                                    <td>${leave.totalDays || 0}</td>
+                                    <td>${leave.status || 'N/A'}</td>
+                                </tr>
+                            `;
+                            leaveTableBody.insertAdjacentHTML('beforeend', row);
+                        });
+                    } else {
+                        leaveTableBody.innerHTML = '<tr><td colspan="6" style="text-align: center;">No leave records found.</td></tr>';
+                    }
+                } else {
+                     console.warn("[CLIENT] leaveTableBody element not found for Admin Dashboard.");
+                }
+
+
+                // Add event listeners for "Add New Employee" and "View All Employees" buttons
+                const addEmployeeBtn = document.getElementById('add-employee-btn');
+                if (addEmployeeBtn) {
+                    addEmployeeBtn.addEventListener('click', () => {
+                        showMessageModal("Employee registration form will open here (not yet implemented).", 'info');
+                        // Future: openEmployeeRegistrationModal();
+                    });
+                }
+                const viewEmployeesBtn = document.getElementById('view-employees-btn');
+                if (viewEmployeesBtn) {
+                    viewEmployeesBtn.addEventListener('click', () => {
+                        showMessageModal("Navigating to employee directory (not yet implemented).", 'info');
+                        // Future: navigateToPage('employees');
+                    });
+                }
+                console.log('[CLIENT] Admin Dashboard rendering complete.');
+            }
+
+            /**
+             * Renders the Employee Dashboard summary cards and basic elements.
+             * @param {Object} data Dashboard data from server.
+             * @param {string} userName Full name of the current user.
+             */
+            function renderEmployeeDashboard(data, userName) {
+                console.log('[CLIENT] Attempting to render Employee Dashboard. Data received:', data); // Log rendering
+
+                // Defensive checks for data properties
+                const leaveRemaining = data.leaveBalance?.remaining !== undefined ? data.leaveBalance.remaining : 'N/A';
+                const pendingTasks = data.taskSummary?.pending !== undefined ? data.taskSummary.pending : 'N/A';
+                const newNotifications = data.recentNotifications?.length !== undefined ? data.recentNotifications.length : 'N/A';
+                const yourAttendanceToday = data.todayAttendance?.status || 'N/A';
+                const performanceScore = data.performanceScore !== undefined ? data.performanceScore : 'N/A';
+                const yourUpcomingLeaveDate = data.yourUpcomingLeaveDate || 'N/A';
+
+                console.log(`[CLIENT] Employee Dashboard Data Values:
+                    Leaves Remaining: ${leaveRemaining}
+                    Pending Tasks: ${pendingTasks}
+                    New Notifications: ${newNotifications}
+                    Your Attendance Today: ${yourAttendanceToday}
+                    Performance Score: ${performanceScore}
+                    Your Upcoming Leave: ${yourUpcomingLeaveDate}
+                `);
+
+                if (pageTitle) pageTitle.textContent = 'Dashboard'; // Keep header title generic for dashboard view
+                
+                try {
+                    if (dynamicPageContent) dynamicPageContent.innerHTML = `
+                        <div class="welcome-banner">
+                            <span id="welcome-message">Welcome, ${userName}!</span>
+                        </div>
+                        <div class="summary-cards" id="employee-dashboard-summary-cards">
+                            <!-- Cards will be dynamically added here -->
+                        </div>
+                        <div class="dashboard-grid" id="employee-dashboard-main-content">
+                            <!-- Charts, live feed etc. will be added here -->
+                        </div>
+                    `;
+                } catch (e) {
+                    console.error("[CLIENT] Error setting innerHTML for Employee Dashboard:", e);
+                    showMessageModal("An error occurred while rendering the Employee Dashboard layout.", 'error');
+                    return; // Stop execution if basic layout render fails
+                }
+
+
+                const dashboardSummaryCards = document.getElementById('employee-dashboard-summary-cards');
+                const dashboardMainContent = document.getElementById('employee-dashboard-main-content');
+
+                // Define cards for Employee Dashboard
+                const cards = [
+                    createDashboardCard('fas fa-plane-departure', 'Leaves Remaining', leaveRemaining, 'Annual leave balance', 'card-blue'),
+                    createDashboardCard('fas fa-tasks', 'Pending Tasks', pendingTasks, 'Tasks to complete', 'card-red'),
+                    createDashboardCard('fas fa-bell', 'New Notifications', newNotifications, 'Unread alerts', 'card-orange'),
+                    createDashboardCard('fas fa-user-check', 'Your Attendance Today', yourAttendanceToday, 'Current day attendance status', 'card-green'),
+                    createDashboardCard('fas fa-chart-line', 'Your Performance Score', performanceScore, 'Last performance review score', 'card-purple'),
+                    createDashboardCard('fas fa-calendar-alt', 'Your Upcoming Leave', yourUpcomingLeaveDate, 'Next approved leave date', 'card-info')
+                ];
+
+                if (dashboardSummaryCards) {
+                    cards.forEach(cardHtml => {
+                        dashboardSummaryCards.insertAdjacentHTML('beforeend', cardHtml);
+                    });
+                } else {
+                    console.warn("[CLIENT] dashboardSummaryCards element not found for Employee Dashboard.");
+                }
+
+
+                // Placeholder for charts/live feed/calendar for employee
+                console.log("[CLIENT] Populating Employee Recent Activity with data:", data.recentNotifications);
+                if (dashboardMainContent) {
+                    dashboardMainContent.innerHTML = `
+                        <div class="chart-container"><h3>Your Performance</h3><p>Your performance chart will be displayed here.</p></div>
+                        <div class="live-feed"><h3>Recent Activity</h3>
+                            <div class="feed-list">
+                                ${(data.recentNotifications && Array.isArray(data.recentNotifications) && data.recentNotifications.length > 0) ? 
+                                    data.recentNotifications.map(n => `
+                                    <div class="feed-item">
+                                        <div class="feed-icon ${n.type === 'Task_Assigned' ? 'feed-task' : 'feed-check-in'}"><i class="fas fa-info-circle"></i></div>
+                                        <div class="feed-text">${n.message || 'N/A'}</div>
+                                        <div class="feed-time">${n.date ? new Date(n.date).toLocaleDateString() : 'N/A'}</div>
+                                    </div>
+                                `).join('') : '<p style="text-align: center; color: var(--text-secondary);">No recent activity to display.</p>'}
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    console.warn("[CLIENT] dashboardMainContent element not found for Employee Dashboard.");
+                }
+                
+                console.log('[CLIENT] Employee Dashboard rendering complete.');
+            }
+
+
+            // --- PROFILE MANAGEMENT ---
+            const viewProfileLink = document.querySelector('[data-action="view-profile"]');
+            if (viewProfileLink) {
+                viewProfileLink.addEventListener('click', () => {
+                    if (currentUser) {
+                        // Populate profile modal fields
+                        if (document.getElementById('profile-username')) document.getElementById('profile-username').value = currentUser.username || '';
+                        if (document.getElementById('profile-fullname')) document.getElementById('profile-fullname').value = currentUser.fullName || '';
+                        if (document.getElementById('profile-email')) document.getElementById('profile-email').value = currentUser.email || '';
+                        if (document.getElementById('profile-phone')) document.getElementById('profile-phone').value = currentUser.phone || '';
+                        if (document.getElementById('profile-address')) document.getElementById('profile-address').value = currentUser.address || '';
+                        if (document.getElementById('profile-department')) document.getElementById('profile-department').value = currentUser.department || '';
+                        if (document.getElementById('profile-role')) document.getElementById('profile-role').value = currentUser.role || '';
+                        // Format date correctly
+                        if (document.getElementById('profile-joining-date')) document.getElementById('profile-joining-date').value = currentUser.joiningDate ? new Date(currentUser.joiningDate).toLocaleDateString() : '';
+                        if (document.getElementById('profile-emergency-contact-name')) document.getElementById('profile-emergency-contact-name').value = currentUser.emergencyContactName || '';
+                        if (document.getElementById('profile-emergency-contact-phone')) document.getElementById('profile-emergency-contact-phone').value = currentUser.emergencyContactPhone || '';
+                        if (document.getElementById('profile-emergency-contact-relation')) document.getElementById('profile-emergency-contact-relation').value = currentUser.emergencyContactRelation || '';
+                        if (document.getElementById('profile-photo-preview')) document.getElementById('profile-photo-preview').src = currentUser.photoUrl || 'https://placehold.co/100x100/EAF0F6/8492A6?text=U';
+
+                        if (profileModal) profileModal.classList.add('active');
+                    }
+                    if (userDropdownToggle) userDropdownToggle.classList.remove('active'); // Close dropdown when opening modal
+                });
+            } else {
+                console.warn("[CLIENT] 'View Profile' link not found.");
+            }
+
+
+            // Handle profile photo preview
+            const profilePhotoUpload = document.getElementById('profile-photo-upload');
+            if (profilePhotoUpload) {
+                profilePhotoUpload.addEventListener('change', function(event) {
+                    const file = event.target.files[0];
+                    if (file) {
+                        const reader = new FileReader();
+                        reader.onload = function(e) {
+                            const profilePhotoPreview = document.getElementById('profile-photo-preview');
+                            if (profilePhotoPreview) profilePhotoPreview.src = e.target.result;
+                            // In a real application, you'd send this base64 string to Apps Script to upload to Drive
+                            // For now, it just shows a preview. Actual upload logic needs to be implemented.
+                            showMessageModal("Photo upload previewed. Actual upload to Drive needs server-side implementation.", 'info');
+                        };
+                        reader.readAsDataURL(file);
+                    }
+                });
+            }
+
+            const profileForm = document.getElementById('profile-form');
+            if (profileForm) {
+                profileForm.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    if (!currentUser) { showMessageModal("No user logged in.", 'error'); return; }
+
+                    const updatedProfile = {
+                        email: document.getElementById('profile-email')?.value,
+                        phone: document.getElementById('profile-phone')?.value,
+                        address: document.getElementById('profile-address')?.value,
+                        emergencyContactName: document.getElementById('profile-emergency-contact-name')?.value,
+                        emergencyContactPhone: document.getElementById('profile-emergency-contact-phone')?.value,
+                        emergencyContactRelation: document.getElementById('profile-emergency-contact-relation')?.value,
+                        // photoUrl: // This would come from the photo upload process
+                    };
+
+                    try {
+                        const response = await callServer('updateUserProfile', currentUser.employeeId, updatedProfile);
+                        if (response.success) {
+                            showMessageModal(response.message, 'success');
+                            if (profileModal) profileModal.classList.remove('active');
+                            // Re-load user data to update header and modals
+                            const updatedUser = await callServer('getAuthenticatedUser', sessionToken);
+                            if (updatedUser) {
+                                currentUser = updatedUser;
+                                if (headerUserName) headerUserName.textContent = currentUser.fullName;
+                                if (headerUserPhoto) headerUserPhoto.src = currentUser.photoUrl || 'https://placehold.co/40x40/EAF0F6/8492A6?text=U';
+                            }
+                        } else {
+                            showMessageModal(response.message, 'error');
+                        }
+                    } catch (err) { /* Handled by callServer */ }
+                });
+            }
+
+            // --- CHANGE PASSWORD ---
+            const changePasswordLink = document.querySelector('[data-action="change-password"]');
+            if (changePasswordLink) {
+                changePasswordLink.addEventListener('click', () => {
+                    if (document.getElementById('current-password')) document.getElementById('current-password').value = '';
+                    if (document.getElementById('new-password-change')) document.getElementById('new-password-change').value = '';
+                    if (document.getElementById('confirm-new-password-change')) document.getElementById('confirm-new-password-change').value = '';
+                    if (changePasswordModal) changePasswordModal.classList.add('active');
+                    if (userDropdownToggle) userDropdownToggle.classList.remove('active'); // Close dropdown when opening modal
+                });
+            } else {
+                console.warn("[CLIENT] 'Change Password' link not found.");
+            }
+
+
+            const changePasswordForm = document.getElementById('change-password-form');
+            if (changePasswordForm) {
+                changePasswordForm.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    if (!currentUser) { showMessageModal("No user logged in.", 'error'); return; }
+
+                    const currentPassword = document.getElementById('current-password')?.value;
+                    const newPassword = document.getElementById('new-password-change')?.value;
+                    const confirmNewPassword = document.getElementById('confirm-new-password-change')?.value;
+
+                    if (newPassword !== confirmNewPassword) {
+                        showMessageModal("New passwords do not match.", 'error');
+                        return;
+                    }
+                    if (newPassword && newPassword.length < 6) { // Example password policy
+                        showMessageModal("New password must be at least 6 characters long.", 'error');
+                        return;
+                    }
+
+                    try {
+                        const response = await callServer('updateUserPassword', currentUser.employeeId, currentPassword, newPassword);
+                        if (response.success) {
+                            showMessageModal(response.message, 'success');
+                            if (changePasswordModal) changePasswordModal.classList.remove('active');
+                            // Optional: force logout after password change for security
+                            // handleLogout(); // Uncomment if you want to force logout
+                        } else {
+                            showMessageModal(response.message, 'error');
+                        }
+                    } catch (err) { /* Handled by callServer */ }
+                });
+            }
+
+
+            // --- LOGOUT ---
+            const logoutLink = document.querySelector('[data-action="logout"]');
+            if (logoutLink) {
+                logoutLink.addEventListener('click', async () => {
+                    if (sessionToken) {
+                        try {
+                            const response = await callServer('logoutUser', sessionToken);
+                            if (response.success) {
+                                currentUser = null;
+                                sessionToken = null;
+                                if (mainAppScreen) mainAppScreen.classList.remove('active'); // Hide dashboard
+                                if (loginScreen) loginScreen.classList.add('active');      // Show login
+                                if (loginScreen) loginScreen.classList.remove('blurred');
+                                showMessageModal("You have been logged out.", 'success');
+                            } else {
+                                showMessageModal(response.message, 'error');
+                            }
+                        } catch (err) { /* Handled by callServer */ }
+                    }
+                });
+            } else {
+                console.warn("[CLIENT] Logout link not found.");
+            }
+
+
+            // --- SIDENAV & THEME TOGGLE ---
+            const menuToggleBtns = document.querySelectorAll('.menu-toggle-btn');
+            if (sidebar) {
+                menuToggleBtns.forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        sidebar.classList.toggle('open');
+                        sidebar.classList.toggle('collapsed');
+                    });
+                });
+            } else {
+                console.warn("[CLIENT] Sidebar element not found. Menu toggle might not work.");
+            }
+
+
+            const themeToggle = document.getElementById('theme-toggle');
+            if (themeToggle) {
+                themeToggle.addEventListener('click', () => {
+                    document.body.classList.toggle('dark-mode');
+                    const isDarkMode = document.body.classList.contains('dark-mode');
+                    localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
+                    // Update icon based on theme
+                    themeToggle.classList.toggle('fa-moon', !isDarkMode);
+                    themeToggle.classList.toggle('fa-sun', isDarkMode);
+                });
+
+                // Apply saved theme on load
+                if (localStorage.getItem('theme') === 'dark') {
+                    document.body.classList.add('dark-mode');
+                    themeToggle.classList.add('fa-sun');
+                    themeToggle.classList.remove('fa-moon');
+                } else {
+                    themeToggle.classList.add('fa-moon');
+                    themeToggle.classList.remove('fa-sun');
+                }
+            } else {
+                console.warn("[CLIENT] Theme toggle element not found.");
+            }
+
+
+            // Sidebar menu navigation
+            document.querySelectorAll('.sidebar-menu a').forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    // Remove active from all and add to clicked
+                    document.querySelectorAll('.sidebar-menu a').forEach(item => item.classList.remove('active'));
+                    this.classList.add('active');
+                    if (pageTitle) pageTitle.textContent = this.textContent.trim(); // Update page title
+
+                    // If sidebar is collapsed and a menu item is clicked, expand it
+                    if (sidebar && sidebar.classList.contains('collapsed')) {
+                        sidebar.classList.remove('collapsed');
+                        sidebar.classList.add('open'); // Ensure it transitions back properly
+                    }
+
+                    // Close sidebar on mobile after click
+                    if (window.innerWidth <= 768 && sidebar) {
+                        sidebar.classList.remove('open');
+                    }
+
+                    // Load content based on data-page attribute
+                    const page = this.dataset.page;
+                    if (!currentUser) {
+                        showMessageModal("Please log in to access this page.", 'error');
+                        return;
+                    }
+
+                    // Clear previous content
+                    if (dynamicPageContent) dynamicPageContent.innerHTML = '';
+                    console.log(`[CLIENT] Navigating to page: ${page}`); // Log page navigation
+
+                    switch (page) {
+                        case 'dashboard':
+                            loadDashboard(currentUser); // Re-load dashboard with current user data
+                            break;
+                        case 'attendance':
+                            renderAttendancePage(currentUser.role, currentUser.employeeId);
+                            break;
+                        case 'leave':
+                            renderLeavePage(currentUser.role, currentUser.employeeId);
+                            break;
+                        case 'tasks':
+                            renderTasksPage(currentUser.role, currentUser.employeeId);
+                            break;
+                        case 'performance':
+                            renderPerformancePage(currentUser.role, currentUser.employeeId);
+                            break;
+                        case 'reports':
+                            renderReportsPage(currentUser.role, currentUser.employeeId);
+                            break;
+                        case 'notifications':
+                            renderNotificationsPage(currentUser.role, currentUser.employeeId);
+                            break;
+                        case 'employees':
+                            if (currentUser.role === 'Admin' || currentUser.role === 'HR' || currentUser.role === 'Manager') {
+                                renderEmployeesPage(currentUser.role, currentUser.employeeId);
+                            } else {
+                                showMessageModal("You do not have permission to access the Employees page.", 'error');
+                                loadDashboard(currentUser); // Revert to dashboard
+                            }
+                            break;
+                        case 'policies':
+                            renderPoliciesPage(currentUser.role, currentUser.employeeId);
+                            break;
+                        case 'calendar':
+                            renderCalendarPage(currentUser.role, currentUser.employeeId);
+                            break;
+                        case 'departments':
+                            if (currentUser.role === 'Admin' || currentUser.role === 'HR') {
+                                renderDepartmentsPage(currentUser.role, currentUser.employeeId);
+                            } else {
+                                showMessageModal("You do not have permission to access the Departments page.", 'error');
+                                loadDashboard(currentUser); // Revert to dashboard
+                            }
+                            break;
+                        case 'user-roles':
+                            if (currentUser.role === 'Admin') {
+                                renderUserRolesPage(currentUser.role, currentUser.employeeId);
+                            } else {
+                                showMessageModal("You do not have permission to access the User Roles page.", 'error');
+                                loadDashboard(currentUser); // Revert to dashboard
+                            }
+                            break;
+                        case 'assign-assets':
+                            if (currentUser.role === 'Admin' || currentUser.role === 'HR' || currentUser.role === 'Manager') {
+                                renderAssignAssetsPage(currentUser.role, currentUser.employeeId);
+                            } else {
+                                showMessageModal("You do not have permission to access the Assign Assets page.", 'error');
+                                loadDashboard(currentUser); // Revert to dashboard
+                            }
+                            break;
+                        case 'payroll':
+                            if (currentUser.role === 'Admin' || currentUser.role === 'HR') { // Typically only Admin/HR for payroll
+                                renderPayrollPage(currentUser.role, currentUser.employeeId);
+                            } else {
+                                showMessageModal("You do not have permission to access the Payroll page.", 'error');
+                                loadDashboard(currentUser); // Revert to dashboard
+                            }
+                            break;
+                        case 'settings':
+                            if (currentUser.role === 'Admin') { // Typically only Admin for settings
+                                renderSettingsPage(currentUser.role, currentUser.employeeId);
+                            } else {
+                                showMessageModal("You do not have permission to access the Settings page.", 'error');
+                                loadDashboard(currentUser); // Revert to dashboard
+                            }
+                            break;
+                        case 'help':
+                            renderHelpCenterPage(currentUser.role, currentUser.employeeId);
+                            break;
+                        default:
+                            if (dynamicPageContent) dynamicPageContent.innerHTML = `<div class="card p-5 rounded-lg shadow-md"><h2 class="text-xl font-semibold mb-4">Page Not Found</h2><p>The requested page content could not be loaded.</p></div>`;
+                            if (pageTitle) pageTitle.textContent = 'Page Not Found';
+                            break;
+                    }
+                });
+            });
+
+            // User dropdown toggle on click
+            if (userDropdownToggle) {
+                userDropdownToggle.addEventListener('click', (event) => {
+                    // Prevent event from bubbling up to window.onclick and immediately closing the dropdown
+                    event.stopPropagation();
+                    userDropdownToggle.classList.toggle('active');
+
+                    // Force visibility toggle explicitly for immediate feedback
+                    if (userDropdownToggle.classList.contains('active')) {
+                        if (userDropdownContent) {
+                            userDropdownContent.style.display = 'block';
+                            // Trigger reflow to ensure transition plays
+                            void userDropdownContent.offsetWidth;
+                            userDropdownContent.style.opacity = '1';
+                            userDropdownContent.style.transform = 'translateY(0)';
+                        }
+                    } else {
+                        if (userDropdownContent) {
+                            userDropdownContent.style.opacity = '0';
+                            userDropdownContent.style.transform = 'translateY(-5px)';
+                            // Use setTimeout to hide `display` after transition completes
+                            setTimeout(() => {
+                                userDropdownContent.style.display = 'none';
+                            }, 200); // Match CSS transition duration
+                        }
+                    }
+                });
+            }
+
+
+            // --- LIVE DATE & TIME ---
+            function updateDateTime() {
+                const now = new Date();
+                const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' };
+                const liveDatetimeElement = document.getElementById('live-datetime');
+                if (liveDatetimeElement) {
+                    liveDatetimeElement.textContent = now.toLocaleDateString('en-US', options);
+                }
+                // Note: Nepali date requires a specific library or complex calculations not native to JS.
+                // For Nepali calendar, you would integrate a library like 'nepali-date-converter'.
+            }
+
+            /**
+             * Renders the Attendance page content.
+             */
+            function renderAttendancePage(userRole, employeeId) {
+                if (pageTitle) pageTitle.textContent = 'Attendance';
+                if (dynamicPageContent) dynamicPageContent.innerHTML = `
+                    <div class="card p-5 rounded-lg shadow-md">
+                        <h2 class="text-xl font-semibold mb-4">Your Attendance</h2>
+                        <p>Details about attendance records for ${userRole} ${employeeId} will be displayed here.</p>
+                        <p>This is a placeholder for your attendance log, clock-in/out functionality, etc.</p>
+                        <div class="mt-4 p-4 bg-gray-100 rounded-md">
+                            <h3 class="text-lg font-medium">Coming Soon:</h3>
+                            <ul class="list-disc list-inside ml-4">
+                                <li>Clock In/Out Interface</li>
+                                <li>Attendance History Table</li>
+                                <li>Absence Tracking</li>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+                console.log("Loading Attendance Page for:", userRole, employeeId);
+            }
+
+            /**
+             * Renders the Leave page content.
+             */
+            function renderLeavePage(userRole, employeeId) {
+                if (pageTitle) pageTitle.textContent = 'Leave Management';
+                if (dynamicPageContent) dynamicPageContent.innerHTML = `
+                    <div class="card p-5 rounded-lg shadow-md">
+                        <h2 class="text-xl font-semibold mb-4">Leave Requests</h2>
+                        <p>Manage your leave requests here. For ${userRole} ${employeeId}.</p>
+                        <p>This section will allow you to apply for leave, view your leave history, and check your leave balance.</p>
+                        <div class="mt-4 p-4 bg-gray-100 rounded-md">
+                            <h3 class="text-lg font-medium">Coming Soon:</h3>
+                            <ul class="list-disc list-inside ml-4">
+                                <li>Leave Application Form</li>
+                                <li>Leave Balance Overview</li>
+                                <li>Approval/Rejection Workflow (for managers/admins)</li>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+                console.log("Loading Leave Page for:", userRole, employeeId);
+            }
+
+            /**
+             * Renders the Tasks page content.
+             */
+            function renderTasksPage(userRole, employeeId) {
+                if (pageTitle) pageTitle.textContent = 'Tasks';
+                if (dynamicPageContent) dynamicPageContent.innerHTML = `
+                    <div class="card p-5 rounded-lg shadow-md">
+                        <h2 class="text-xl font-semibold mb-4">Your Tasks</h2>
+                        <p>View and manage your assigned tasks here. For ${userRole} ${employeeId}.</p>
+                        <p>You can see task details, deadlines, and update progress.</p>
+                        <div class="mt-4 p-4 bg-gray-100 rounded-md">
+                            <h3 class="text-lg font-medium">Coming Soon:</h3>
+                            <ul class="list-disc list-inside ml-4">
+                                <li>Task List (Assigned, In Progress, Completed)</li>
+                                <li>Task Details View</li>
+                                <li>Task Submission/Update</li>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+                console.log("Loading Tasks Page for:", userRole, employeeId);
+            }
+
+            /**
+             * Renders the Performance page content.
+             */
+            function renderPerformancePage(userRole, employeeId) {
+                if (pageTitle) pageTitle.textContent = 'Performance';
+                if (dynamicPageContent) dynamicPageContent.innerHTML = `
+                    <div class="card p-5 rounded-lg shadow-md">
+                        <h2 class="text-xl font-semibold mb-4">Performance Reviews</h2>
+                        <p>Access your performance reviews and feedback here. For ${userRole} ${employeeId}.</p>
+                        <p>This section provides insights into your professional growth.</p>
+                        <div class="mt-4 p-4 bg-gray-100 rounded-md">
+                            <h3 class="text-lg font-medium">Coming Soon:</h3>
+                            <ul class="list-disc list-inside ml-4">
+                                <li>Performance Review History</li>
+                                <li>Goal Setting & Tracking</li>
+                                <li>Feedback Mechanisms</li>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+                console.log("Loading Performance Page for:", userRole, employeeId);
+            }
+
+            /**
+             * Renders the Reports page content.
+             */
+            function renderReportsPage(userRole, employeeId) {
+                if (pageTitle) pageTitle.textContent = 'Reports';
+                if (dynamicPageContent) dynamicPageContent.innerHTML = `
+                    <div class="card p-5 rounded-lg shadow-md">
+                        <h2 class="text-xl font-semibold mb-4">Company Reports</h2>
+                        <p>Generate and view various HR reports. For ${userRole} ${employeeId}.</p>
+                        <p>This area is typically for administrators and managers to gain insights.</p>
+                        <div class="mt-4 p-4 bg-gray-100 rounded-md">
+                            <h3 class="text-lg font-medium">Coming Soon:</h3>
+                            <ul class="list-disc list-inside ml-4">
+                                <li>Customizable Report Generation</li>
+                                <li>Employee Data Reports</li>
+                                <li>Attendance Summaries</li>
+                                <li>Leave Trend Analysis</li>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+                console.log("Loading Reports Page for:", userRole, employeeId);
+            }
+
+            /**
+             * Renders the Notifications page content.
+             */
+            function renderNotificationsPage(userRole, employeeId) {
+                if (pageTitle) pageTitle.textContent = 'Notifications';
+                if (dynamicPageContent) dynamicPageContent.innerHTML = `
+                    <div class="card p-5 rounded-lg shadow-md">
+                        <h2 class="text-xl font-semibold mb-4">Your Notifications</h2>
+                        <p>Stay updated with company announcements and alerts. For ${userRole} ${employeeId}.</p>
+                        <p>All your important messages will appear here.</p>
+                        <div class="mt-4 p-4 bg-gray-100 rounded-md">
+                            <h3 class="text-lg font-medium">Coming Soon:</h3>
+                            <ul class="list-disc list-inside ml-4">
+                                <li>Notification List & Filtering</li>
+                                <li>Read/Unread Status</li>
+                                <li>Archiving Options</li>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+                console.log("Loading Notifications Page for:", userRole, employeeId);
+            }
+
+            /**
+             * Renders the Employees page content (Admin Only).
+             */
+            function renderEmployeesPage(userRole, employeeId) {
+                if (pageTitle) pageTitle.textContent = 'Employee Directory';
+                if (dynamicPageContent) dynamicPageContent.innerHTML = `
+                    <div class="card p-5 rounded-lg shadow-md">
+                        <h2 class="text-xl font-semibold mb-4">Manage Employees</h2>
+                        <p>View and manage all employee records here. Accessible by ${userRole} ${employeeId}.</p>
+                        <p>This is a core HR function for managing staff details.</p>
+                        <div class="mt-4 p-4 bg-gray-100 rounded-md">
+                            <h3 class="text-lg font-medium">Coming Soon:</h3>
+                            <ul class="list-disc list-inside ml-4">
+                                <li>Employee List with Search & Filter</li>
+                                <li>Add New Employee</li>
+                                <li>Edit/Delete Employee Records</li>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+                console.log("Loading Employees Page for:", userRole, employeeId);
+            }
+
+            /**
+             * Renders the Policies page content.
+             */
+            function renderPoliciesPage(userRole, employeeId) {
+                if (pageTitle) pageTitle.textContent = 'Company Policies';
+                if (dynamicPageContent) dynamicPageContent.innerHTML = `
+                    <div class="card p-5 rounded-lg shadow-md">
+                        <h2 class="text-xl font-semibold mb-4">Company Policies & Guidelines</h2>
+                        <p>Access and review all company policies. For ${userRole} ${employeeId}.</p>
+                        <p>Stay informed about company regulations and procedures.</p>
+                        <div class="mt-4 p-4 bg-gray-100 rounded-md">
+                            <h3 class="text-lg font-medium">Coming Soon:</h3>
+                            <ul class="list-disc list-inside ml-4">
+                                <li>Policy Document Viewer</li>
+                                <li>Policy Categories & Search</li>
+                                <li>Policy Acknowledgement Tracking</li>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+                console.log("Loading Policies Page for:", userRole, employeeId);
+            }
+
+            /**
+             * Renders the Calendar page content.
+             */
+            function renderCalendarPage(userRole, employeeId) {
+                if (pageTitle) pageTitle.textContent = 'Company Calendar';
+                if (dynamicPageContent) dynamicPageContent.innerHTML = `
+                    <div class="card p-5 rounded-lg shadow-md">
+                        <h2 class="text-xl font-semibold mb-4">Upcoming Events & Holidays</h2>
+                        <p>View important company dates, holidays, and events. For ${userRole} ${employeeId}.</p>
+                        <p>Plan your schedule effectively with this central calendar.</p>
+                        <div class="mt-4 p-4 bg-gray-100 rounded-md">
+                            <h3 class="text-lg font-medium">Coming Soon:</h3>
+                            <ul class="list-disc list-inside ml-4">
+                                <li>Interactive Calendar View</li>
+                                <li>Event Details</li>
+                                <li>Holiday List</li>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+                console.log("Loading Calendar Page for:", userRole, employeeId);
+            }
+
+            /**
+             * Renders the Departments page content (Admin Only).
+             */
+            function renderDepartmentsPage(userRole, employeeId) {
+                if (pageTitle) pageTitle.textContent = 'Departments';
+                if (dynamicPageContent) dynamicPageContent.innerHTML = `
+                    <div class="card p-5 rounded-lg shadow-md">
+                        <h2 class="text-xl font-semibold mb-4">Manage Departments</h2>
+                        <p>Add, edit, or remove departments within the company. Accessible by ${userRole} ${employeeId}.</p>
+                        <p>Efficiently organize your organizational structure.</p>
+                        <div class="mt-4 p-4 bg-gray-100 rounded-md">
+                            <h3 class="text-lg font-medium">Coming Soon:</h3>
+                            <ul class="list-disc list-inside ml-4">
+                                <li>Department List & Details</li>
+                                <li>Add/Edit Department Forms</li>
+                                <li>Department Member Assignment</li>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+                console.log("Loading Departments Page for:", userRole, employeeId);
+            }
+
+            /**
+             * Renders the User Roles page content (Admin Only).
+             */
+            function renderUserRolesPage(userRole, employeeId) {
+                if (pageTitle) pageTitle.textContent = 'User Roles';
+                if (dynamicPageContent) dynamicPageContent.innerHTML = `
+                    <div class="card p-5 rounded-lg shadow-md">
+                        <h2 class="text-xl font-semibold mb-4">Manage User Roles & Permissions</h2>
+                        <p>Define and assign different roles and their permissions within the system. Accessible by ${userRole} ${employeeId}.</p>
+                        <p>Control access levels for various functionalities.</p>
+                        <div class="mt-4 p-4 bg-gray-100 rounded-md">
+                            <h3 class="text-lg font-medium">Coming Soon:</h3>
+                            <ul class="list-disc list-inside ml-4">
+                                <li>Role List & Permissions Matrix</li>
+                                <li>Create/Edit Roles</li>
+                                <li>Assign Roles to Users</li>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+                console.log("Loading User Roles Page for:", userRole, employeeId);
+            }
+
+            /**
+             * Renders the Assign Assets page content (Admin/HR/Manager Only).
+             */
+            function renderAssignAssetsPage(userRole, employeeId) {
+                if (pageTitle) pageTitle.textContent = 'Assign Assets';
+                if (dynamicPageContent) dynamicPageContent.innerHTML = `
+                    <div class="card p-5 rounded-lg shadow-md">
+                        <h2 class="text-xl font-semibold mb-4">Manage Company Assets</h2>
+                        <p>Assign and track company assets (e.g., laptops, phones) to employees. Accessible by ${userRole} ${employeeId}.</p>
+                        <p>Keep a record of all distributed company property.</p>
+                        <div class="mt-4 p-4 bg-gray-100 rounded-md">
+                            <h3 class="text-lg font-medium">Coming Soon:</h3>
+                            <ul class="list-disc list-inside ml-4">
+                                <li>Asset List & Status</li>
+                                <li>Assign/De-assign Assets to Employees</li>
+                                <li>Asset History</li>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+                console.log("Loading Assign Assets Page for:", userRole, employeeId);
+            }
+
+            /**
+             * Renders the Payroll page content (Admin Only).
+             */
+            function renderPayrollPage(userRole, employeeId) {
+                if (pageTitle) pageTitle.textContent = 'Payroll Management';
+                if (dynamicPageContent) dynamicPageContent.innerHTML = `
+                    <div class="card p-5 rounded-lg shadow-md">
+                        <h2 class="text-xl font-semibold mb-4">Process Payroll</h2>
+                        <p>Manage and process payroll for all employees. Accessible by ${userRole} ${employeeId}.</p>
+                        <p>This includes salary, deductions, and pay slips.</p>
+                        <div class="mt-4 p-4 bg-gray-100 rounded-md">
+                            <h3 class="text-lg font-medium">Coming Soon:</h3>
+                            <ul class="list-disc list-inside ml-4">
+                                <li>Generate Pay Slips</li>
+                                <li>Calculate Salaries & Deductions</li>
+                                <li>Payroll History</li>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+                console.log("Loading Payroll Page for:", userRole, employeeId);
+            }
+
+            /**
+             * Renders the Settings page content (Admin Only).
+             */
+            function renderSettingsPage(userRole, employeeId) {
+                if (pageTitle) pageTitle.textContent = 'Company Settings';
+                if (dynamicPageContent) dynamicPageContent.innerHTML = `
+                    <div class="card p-5 rounded-lg shadow-md">
+                        <h2 class="text-xl font-semibold mb-4">System Configurations</h2>
+                        <p>Configure company-wide settings. Accessible by ${userRole} ${employeeId}.</p>
+                        <p>Manage roles, departments, leave types, and other system parameters.</p>
+                        <div class="mt-4 p-4 bg-gray-100 rounded-md">
+                            <h3 class="text-lg font-medium">Coming Soon:</h3>
+                            <ul class="list-disc list-inside ml-4">
+                                <li>User Role Management</li>
+                                <li>Department Management</li>
+                                <li>Leave Type Configuration</li>
+                                <li>System Integrations</li>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+                console.log("Loading Settings Page for:", userRole, employeeId);
+            }
+
+            /**
+             * Renders the Help Center page content.
+             */
+            function renderHelpCenterPage(userRole, employeeId) {
+                if (pageTitle) pageTitle.textContent = 'Help Center';
+                if (dynamicPageContent) dynamicPageContent.innerHTML = `
+                    <div class="card p-5 rounded-lg shadow-md">
+                        <h2 class="text-xl font-semibold mb-4">Help & Support</h2>
+                        <p>Find answers to common questions and get support here. For ${userRole} ${employeeId}.</p>
+                        <p>Resources to help you navigate the HRMS.</p>
+                        <div class="mt-4 p-4 bg-gray-100 rounded-md">
+                            <h3 class="text-lg font-medium">Coming Soon:</h3>
+                            <ul class="list-disc list-inside ml-4">
+                                <li>Knowledge Base/FAQ</li>
+                                <li>Submit Support Ticket</li>
+                                <li>Contact Information</li>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+                console.log("Loading Help Center Page for:", userRole, employeeId);
+            }
+
+
+            // --- INITIALIZE THE APP ---
+            // Ensure login screen is ALWAYS active initially, and NEVER automatically restore session
+            async function initializeApp() {
+                if (loginScreen) loginScreen.classList.add('active'); // Start with login screen active
+                if (mainAppScreen) mainAppScreen.classList.remove('active'); // Ensure dashboard is not active initially
+                console.log('[CLIENT] Application initialized. Displaying login screen.'); // Log initialization
+
+                // No longer checking localStorage for automatic session restoration
+            }
+
+            initializeApp();
+
+        } catch (e) {
+            // This catch block will specifically catch errors that occur *during* the DOMContentLoaded execution
+            console.error('[CLIENT-CRITICAL-ERROR] Error during DOMContentLoaded execution:', e);
+            // Attempt to show a critical error message to the user if possible
+            const targetContentArea = document.getElementById('dynamic-page-content') || document.body;
+            if (targetContentArea) {
+                targetContentArea.innerHTML = `<div class="card p-5 rounded-lg shadow-md"><h2 class="text-xl font-semibold mb-4">Critical Application Error</h2><p>An unexpected error occurred during application setup. Please check the console for details and refresh the page.</p><p>Error: ${e.message}</p></div>`;
+            } else {
+                // If dynamicPageContent isn't available, try to alert or show modal
+                // (Using console.error as alert() is discouraged in final apps)
+                console.error("Failed to render critical error message, dynamicPageContent not found.");
+            }
+        }
+    });
+</script>
+
+
+
